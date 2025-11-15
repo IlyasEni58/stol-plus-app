@@ -1,0 +1,2141 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StolPlus - Мебель для комфортной жизни</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .filter-section {
+            transition: all 0.3s ease;
+        }
+        .modal-overlay {
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+        }
+        .image-gallery img {
+            transition: transform 0.3s ease;
+        }
+        .image-gallery img:hover {
+            transform: scale(1.05);
+        }
+        .favorite-btn.active {
+            color: #ef4444;
+        }
+        .order-status-new { background-color: #3b82f6; color: white; }
+        .order-status-processing { background-color: #f59e0b; color: white; }
+        .order-status-completed { background-color: #10b981; color: white; }
+        .order-status-cancelled { background-color: #ef4444; color: white; }
+        .star-rating .star {
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+        .star-rating .star:hover {
+            color: #fbbf24;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+<div id="root"></div>
+
+<script type="text/babel">
+    // ==================== API СЕРВИС ====================
+    const apiService = {
+        baseURL: 'http://localhost:8090/api',
+
+        async getAllFurniture() {
+            try {
+                console.log('Загружаем мебель из API...');
+                const response = await axios.get(`${this.baseURL}/furniture`);
+                console.log('Мебель загружена:', response.data);
+                return response.data;
+            } catch (error) {
+                console.error('Ошибка при загрузке мебели:', error);
+                return [];
+            }
+        }
+    };
+
+    // ==================== СИСТЕМА ОТЗЫВОВ ====================
+    const reviewService = {
+        getReviews() {
+            const reviews = localStorage.getItem('stolplus-reviews');
+            return reviews ? JSON.parse(reviews) : [];
+        },
+
+        getProductReviews(productId) {
+            const reviews = this.getReviews();
+            return reviews.filter(review => review.productId === productId);
+        },
+
+        addReview(reviewData) {
+            const reviews = this.getReviews();
+            const newReview = {
+                id: Date.now(),
+                ...reviewData,
+                createdAt: new Date().toISOString(),
+                likes: 0,
+                dislikes: 0
+            };
+            reviews.push(newReview);
+            localStorage.setItem('stolplus-reviews', JSON.stringify(reviews));
+            return newReview;
+        },
+
+        getProductRating(productId) {
+            const reviews = this.getProductReviews(productId);
+            if (reviews.length === 0) return 0;
+
+            const total = reviews.reduce((sum, review) => sum + review.rating, 0);
+            return Math.round((total / reviews.length) * 10) / 10;
+        },
+
+        getUserReview(productId, userId) {
+            const reviews = this.getReviews();
+            return reviews.find(review => review.productId === productId && review.userId === userId);
+        }
+    };
+
+    // ==================== СИСТЕМА АВТОРИЗАЦИИ ====================
+    const authService = {
+        currentUser: null,
+
+        login(email, password, userData = {}) {
+            this.currentUser = {
+                id: Date.now(),
+                email: email,
+                name: userData.name || 'Пользователь',
+                phone: userData.phone || '+7 (999) 000-00-00',
+                address: userData.address || 'Адрес не указан'
+            };
+            localStorage.setItem('stolplus-user', JSON.stringify(this.currentUser));
+            return Promise.resolve(this.currentUser);
+        },
+
+        register(email, password, userData) {
+            return this.login(email, password, userData);
+        },
+
+        logout() {
+            this.currentUser = null;
+            localStorage.removeItem('stolplus-user');
+        },
+
+        getCurrentUser() {
+            if (this.currentUser) return this.currentUser;
+            const saved = localStorage.getItem('stolplus-user');
+            if (saved) {
+                this.currentUser = JSON.parse(saved);
+            }
+            return this.currentUser;
+        },
+
+        isAuthenticated() {
+            return !!this.getCurrentUser();
+        }
+    };
+
+    // ==================== СИСТЕМА ЗАКАЗОВ ====================
+    const orderService = {
+        getOrders() {
+            const orders = localStorage.getItem('stolplus-orders');
+            return orders ? JSON.parse(orders) : [];
+        },
+
+        createOrder(orderData) {
+            const orders = this.getOrders();
+            const newOrder = {
+                id: Date.now(),
+                ...orderData,
+                createdAt: new Date().toISOString(),
+                status: 'new'
+            };
+            orders.push(newOrder);
+            localStorage.setItem('stolplus-orders', JSON.stringify(orders));
+            return newOrder;
+        },
+
+        updateOrderStatus(orderId, status) {
+            const orders = this.getOrders();
+            const orderIndex = orders.findIndex(order => order.id === orderId);
+            if (orderIndex !== -1) {
+                orders[orderIndex].status = status;
+                localStorage.setItem('stolplus-orders', JSON.stringify(orders));
+            }
+        },
+
+        getUserOrders(userId) {
+            const orders = this.getOrders();
+            return orders.filter(order => order.userId === userId);
+        }
+    };
+
+    // ==================== КОМПОНЕНТ АВТОРИЗАЦИИ ====================
+    function AuthModal({ isOpen, onClose, onLogin }) {
+        const [isLogin, setIsLogin] = React.useState(true);
+        const [formData, setFormData] = React.useState({
+            email: '',
+            password: '',
+            name: '',
+            phone: ''
+        });
+
+        const handleSubmit = async (e) => {
+            e.preventDefault();
+            try {
+                let user;
+                if (isLogin) {
+                    user = await authService.login(formData.email, formData.password);
+                } else {
+                    user = await authService.register(formData.email, formData.password, {
+                        name: formData.name,
+                        phone: formData.phone,
+                        address: 'Адрес не указан'
+                    });
+                }
+                onLogin(user);
+                onClose();
+                setFormData({ email: '', password: '', name: '', phone: '' });
+            } catch (error) {
+                alert('Ошибка авторизации');
+            }
+        };
+
+        const handleChange = (e) => {
+            setFormData(prev => ({
+                ...prev,
+                [e.target.name]: e.target.value
+            }));
+        };
+
+        if (!isOpen) return null;
+
+        return (
+            <div className="fixed inset-0 z-50 overflow-y-auto">
+                <div className="modal-overlay fixed inset-0" onClick={onClose}></div>
+
+                <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="relative bg-white rounded-2xl shadow-xl max-w-md w-full">
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <h2 className="text-2xl font-bold text-gray-900">
+                                {isLogin ? 'Вход' : 'Регистрация'}
+                            </h2>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-gray-600 text-2xl p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                            {!isLogin && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Имя
+                                    </label>
+                                    <input
+                                        type="text"
+                                        name="name"
+                                        value={formData.name}
+                                        onChange={handleChange}
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Email
+                                </label>
+                                <input
+                                    type="email"
+                                    name="email"
+                                    value={formData.email}
+                                    onChange={handleChange}
+                                    required
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+
+                            {!isLogin && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Телефон
+                                    </label>
+                                    <input
+                                        type="tel"
+                                        name="phone"
+                                        value={formData.phone}
+                                        onChange={handleChange}
+                                        required
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                </div>
+                            )}
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Пароль
+                                </label>
+                                <input
+                                    type="password"
+                                    name="password"
+                                    value={formData.password}
+                                    onChange={handleChange}
+                                    required
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+
+                            <button
+                                type="submit"
+                                className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition-colors font-semibold"
+                            >
+                                {isLogin ? 'Войти' : 'Зарегистрироваться'}
+                            </button>
+
+                            <div className="text-center">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsLogin(!isLogin)}
+                                    className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                                >
+                                    {isLogin ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== КОМПОНЕНТ ЛИЧНОГО КАБИНЕТА ====================
+    function UserProfileModal({ isOpen, onClose, user, orders, onLogout }) {
+        if (!isOpen || !user) return null;
+
+        const userOrders = orders.filter(order => order.userId === user.id);
+
+        const getOrderStatusText = (status) => {
+            const statuses = {
+                'new': 'Новый',
+                'processing': 'В обработке',
+                'completed': 'Завершен',
+                'cancelled': 'Отменен'
+            };
+            return statuses[status] || status;
+        };
+
+        return (
+            <div className="fixed inset-0 z-50 overflow-y-auto">
+                <div className="modal-overlay fixed inset-0" onClick={onClose}></div>
+
+                <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="relative bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <h2 className="text-2xl font-bold text-gray-900">Личный кабинет</h2>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-gray-600 text-2xl p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto max-h-[calc(90vh-140px)]">
+                            <div className="p-6 space-y-8">
+                                {/* Информация о пользователе */}
+                                <div>
+                                    <h3 className="text-xl font-semibold text-gray-900 mb-4">Личная информация</h3>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Имя</label>
+                                            <p className="text-gray-900">{user.name}</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                            <p className="text-gray-900">{user.email}</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Телефон</label>
+                                            <p className="text-gray-900">{user.phone}</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Адрес</label>
+                                            <p className="text-gray-900">{user.address}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* История заказов */}
+                                <div>
+                                    <h3 className="text-xl font-semibold text-gray-900 mb-4">История заказов</h3>
+                                    {userOrders.length === 0 ? (
+                                        <p className="text-gray-600 text-center py-8">Заказов пока нет</p>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            {userOrders.map(order => (
+                                                <div key={order.id} className="border border-gray-200 rounded-lg p-4">
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <div>
+                                                            <h4 className="font-semibold text-gray-900">Заказ #{order.id}</h4>
+                                                            <p className="text-sm text-gray-600">
+                                                                {new Date(order.createdAt).toLocaleDateString('ru-RU')}
+                                                            </p>
+                                                        </div>
+                                                        <span className={`px-3 py-1 rounded-full text-sm font-medium order-status-${order.status}`}>
+                                                            {getOrderStatusText(order.status)}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="space-y-2 mb-3">
+                                                        {order.items.map(item => (
+                                                            <div key={item.id} className="flex justify-between text-sm">
+                                                                <span>{item.name}</span>
+                                                                <span>{item.quantity} × {item.price.toLocaleString('ru-RU')} ₽</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="flex justify-between items-center border-t pt-3">
+                                                        <span className="font-semibold">Итого:</span>
+                                                        <span className="font-semibold text-lg">
+                                                            {order.totalAmount.toLocaleString('ru-RU')} ₽
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Кнопка выхода */}
+                                <div className="border-t pt-6">
+                                    <button
+                                        onClick={onLogout}
+                                        className="w-full bg-red-500 text-white py-3 rounded-lg hover:bg-red-600 transition-colors font-semibold"
+                                    >
+                                        Выйти из аккаунта
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== КОМПОНЕНТ ОФОРМЛЕНИЯ ЗАКАЗА ====================
+    function CheckoutModal({ isOpen, onClose, cartItems, onOrderCreated, user }) {
+        const [formData, setFormData] = React.useState({
+            name: '',
+            email: '',
+            phone: '',
+            address: '',
+            comment: ''
+        });
+
+        React.useEffect(() => {
+            if (user) {
+                setFormData(prev => ({
+                    ...prev,
+                    name: user.name,
+                    email: user.email,
+                    phone: user.phone,
+                    address: user.address
+                }));
+            }
+        }, [user]);
+
+        const total = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+        const handleSubmit = (e) => {
+            e.preventDefault();
+
+            const orderData = {
+                userId: user ? user.id : null,
+                items: cartItems,
+                totalAmount: total,
+                customerInfo: formData,
+                status: 'new'
+            };
+
+            const newOrder = orderService.createOrder(orderData);
+            onOrderCreated(newOrder);
+            onClose();
+
+            setFormData({
+                name: '',
+                email: '',
+                phone: '',
+                address: '',
+                comment: ''
+            });
+        };
+
+        const handleChange = (e) => {
+            setFormData(prev => ({
+                ...prev,
+                [e.target.name]: e.target.value
+            }));
+        };
+
+        if (!isOpen) return null;
+
+        return (
+            <div className="fixed inset-0 z-50 overflow-y-auto">
+                <div className="modal-overlay fixed inset-0" onClick={onClose}></div>
+
+                <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="relative bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <h2 className="text-2xl font-bold text-gray-900">Оформление заказа</h2>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-gray-600 text-2xl p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto max-h-[calc(90vh-140px)]">
+                            <form onSubmit={handleSubmit} className="p-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {/* Левая колонка - Товары */}
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Товары в заказе</h3>
+                                        <div className="space-y-3 mb-4">
+                                            {cartItems.map(item => (
+                                                <div key={item.id} className="flex justify-between items-center text-sm">
+                                                    <span>{item.name} × {item.quantity}</span>
+                                                    <span>{(item.price * item.quantity).toLocaleString('ru-RU')} ₽</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="border-t pt-3">
+                                            <div className="flex justify-between font-semibold">
+                                                <span>Итого:</span>
+                                                <span>{total.toLocaleString('ru-RU')} ₽</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Правая колонка - Форма */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Данные для доставки</h3>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                ФИО *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                name="name"
+                                                value={formData.name}
+                                                onChange={handleChange}
+                                                required
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Email *
+                                            </label>
+                                            <input
+                                                type="email"
+                                                name="email"
+                                                value={formData.email}
+                                                onChange={handleChange}
+                                                required
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Телефон *
+                                            </label>
+                                            <input
+                                                type="tel"
+                                                name="phone"
+                                                value={formData.phone}
+                                                onChange={handleChange}
+                                                required
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Адрес доставки *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                name="address"
+                                                value={formData.address}
+                                                onChange={handleChange}
+                                                required
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Комментарий к заказу
+                                            </label>
+                                            <textarea
+                                                name="comment"
+                                                value={formData.comment}
+                                                onChange={handleChange}
+                                                rows="3"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6">
+                                    <button
+                                        type="submit"
+                                        className="w-full bg-blue-500 text-white py-4 rounded-lg hover:bg-blue-600 transition-colors font-semibold text-lg"
+                                    >
+                                        Подтвердить заказ
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== КОМПОНЕНТ ИЗБРАННОГО ====================
+    function FavoritesModal({ isOpen, onClose, favorites, onRemoveFavorite, onAddToCart, onViewDetails }) {
+        if (!isOpen) return null;
+
+        return (
+            <div className="fixed inset-0 z-50 overflow-y-auto">
+                <div className="modal-overlay fixed inset-0" onClick={onClose}></div>
+
+                <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="relative bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <h2 className="text-2xl font-bold text-gray-900">Избранное</h2>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-gray-600 text-2xl p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto max-h-[calc(90vh-140px)] p-6">
+                            {favorites.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <div className="text-gray-300 text-6xl mb-4">❤️</div>
+                                    <h3 className="text-xl font-semibold text-gray-900 mb-2">В избранном пока пусто</h3>
+                                    <p className="text-gray-600 mb-4">Добавляйте товары в избранное, чтобы не потерять</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center mb-4">
+                                        <span className="text-gray-600">
+                                            {favorites.length} товаров в избранном
+                                        </span>
+                                        <button
+                                            onClick={() => {
+                                                if (confirm('Очистить все избранное?')) {
+                                                    favorites.forEach(item => onRemoveFavorite(item.id));
+                                                }
+                                            }}
+                                            className="text-red-600 hover:text-red-700 text-sm font-medium"
+                                        >
+                                            Очистить все
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {favorites.map(product => (
+                                            <div key={product.id} className="flex items-center space-x-4 p-4 border border-gray-200 rounded-lg hover:shadow-md transition-shadow">
+                                                <img
+                                                    src={product.imageUrl.startsWith('http')
+                                                        ? product.imageUrl
+                                                        : `http://localhost:8090${product.imageUrl}`}
+                                                    alt={product.name}
+                                                    className="w-20 h-20 object-cover rounded"
+                                                />
+                                                <div className="flex-1 min-w-0">
+                                                    <h4 className="font-medium text-gray-900 truncate mb-1">
+                                                        {product.name}
+                                                    </h4>
+                                                    <p className="text-blue-600 font-semibold mb-2">
+                                                        {product.price?.toLocaleString('ru-RU')} ₽
+                                                    </p>
+                                                    <div className="flex space-x-2">
+                                                        <button
+                                                            onClick={() => onAddToCart(product.id)}
+                                                            className="flex-1 bg-blue-500 text-white py-2 px-3 rounded text-sm hover:bg-blue-600 transition-colors"
+                                                        >
+                                                            В корзину
+                                                        </button>
+                                                        <button
+                                                            onClick={() => onViewDetails(product)}
+                                                            className="px-3 py-2 border border-gray-300 text-gray-700 rounded text-sm hover:border-gray-400 transition-colors"
+                                                        >
+                                                            Подробнее
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => onRemoveFavorite(product.id)}
+                                                    className="text-gray-400 hover:text-red-500 transition-colors p-2"
+                                                    title="Удалить из избранного"
+                                                >
+                                                    ×
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== КОМПОНЕНТ РЕЙТИНГА ====================
+    function StarRating({ rating, onRatingChange, readonly = false, size = 'md' }) {
+        const sizeClasses = {
+            sm: 'text-lg',
+            md: 'text-xl',
+            lg: 'text-2xl'
+        };
+
+        return (
+            <div className={`star-rating flex ${sizeClasses[size]} ${readonly ? '' : 'cursor-pointer'}`}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                    <span
+                        key={star}
+                        className={`star mx-0.5 ${
+                            star <= rating ? 'text-yellow-400' : 'text-gray-300'
+                        } ${readonly ? '' : 'hover:text-yellow-300'}`}
+                        onClick={() => !readonly && onRatingChange(star)}
+                    >
+                        ★
+                    </span>
+                ))}
+            </div>
+        );
+    }
+
+    // ==================== КОМПОНЕНТ ОТЗЫВОВ ====================
+    function ReviewsSection({ productId, user, reviews, onReviewAdded }) {
+        const [showReviewForm, setShowReviewForm] = React.useState(false);
+        const [reviewForm, setReviewForm] = React.useState({
+            rating: 0,
+            comment: '',
+            advantages: '',
+            disadvantages: ''
+        });
+
+        const productReviews = reviews.filter(review => review.productId === productId);
+        const userReview = reviewService.getUserReview(productId, user?.id);
+        const averageRating = reviewService.getProductRating(productId);
+
+        const handleSubmitReview = (e) => {
+            e.preventDefault();
+            if (!user) {
+                alert('Войдите в аккаунт, чтобы оставить отзыв');
+                return;
+            }
+
+            const newReview = reviewService.addReview({
+                productId,
+                userId: user.id,
+                userName: user.name,
+                rating: reviewForm.rating,
+                comment: reviewForm.comment,
+                advantages: reviewForm.advantages,
+                disadvantages: reviewForm.disadvantages
+            });
+
+            onReviewAdded(newReview);
+            setReviewForm({ rating: 0, comment: '', advantages: '', disadvantages: '' });
+            setShowReviewForm(false);
+        };
+
+        const handleRatingChange = (rating) => {
+            setReviewForm(prev => ({ ...prev, rating }));
+        };
+
+        return (
+            <div className="mt-8 border-t pt-8">
+                <div className="flex justify-between items-center mb-6">
+                    <div>
+                        <h3 className="text-2xl font-bold text-gray-900">Отзывы о товаре</h3>
+                        <div className="flex items-center space-x-4 mt-2">
+                            <div className="flex items-center space-x-2">
+                                <StarRating rating={averageRating} readonly={true} size="lg" />
+                                <span className="text-lg font-semibold">{averageRating}</span>
+                            </div>
+                            <span className="text-gray-500">•</span>
+                            <span className="text-gray-600">{productReviews.length} отзывов</span>
+                        </div>
+                    </div>
+
+                    {user && !userReview && (
+                        <button
+                            onClick={() => setShowReviewForm(!showReviewForm)}
+                            className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors font-medium"
+                        >
+                            Написать отзыв
+                        </button>
+                    )}
+                </div>
+
+                {/* Форма отзыва */}
+                {showReviewForm && (
+                    <div className="bg-gray-50 rounded-lg p-6 mb-6">
+                        <h4 className="text-lg font-semibold mb-4">Оставить отзыв</h4>
+                        <form onSubmit={handleSubmitReview} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Ваша оценка *
+                                </label>
+                                <StarRating
+                                    rating={reviewForm.rating}
+                                    onRatingChange={handleRatingChange}
+                                    readonly={false}
+                                    size="lg"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Достоинства
+                                </label>
+                                <textarea
+                                    value={reviewForm.advantages}
+                                    onChange={(e) => setReviewForm(prev => ({ ...prev, advantages: e.target.value }))}
+                                    placeholder="Что вам понравилось в товаре?"
+                                    rows="2"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Недостатки
+                                </label>
+                                <textarea
+                                    value={reviewForm.disadvantages}
+                                    onChange={(e) => setReviewForm(prev => ({ ...prev, disadvantages: e.target.value }))}
+                                    placeholder="Что можно улучшить?"
+                                    rows="2"
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Комментарий *
+                                </label>
+                                <textarea
+                                    value={reviewForm.comment}
+                                    onChange={(e) => setReviewForm(prev => ({ ...prev, comment: e.target.value }))}
+                                    placeholder="Поделитесь вашим мнением о товаре..."
+                                    rows="3"
+                                    required
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+
+                            <div className="flex space-x-3">
+                                <button
+                                    type="submit"
+                                    disabled={!reviewForm.rating || !reviewForm.comment}
+                                    className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors font-medium disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                >
+                                    Опубликовать отзыв
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowReviewForm(false)}
+                                    className="px-6 py-2 border border-gray-300 text-gray-700 rounded-lg hover:border-gray-400 transition-colors font-medium"
+                                >
+                                    Отмена
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                )}
+
+                {/* Список отзывов */}
+                <div className="space-y-6">
+                    {productReviews.length === 0 ? (
+                        <div className="text-center py-8">
+                            <div className="text-gray-300 text-4xl mb-4">💬</div>
+                            <p className="text-gray-600">Пока нет отзывов о этом товаре</p>
+                            <p className="text-gray-500 text-sm">Будьте первым, кто оставит отзыв!</p>
+                        </div>
+                    ) : (
+                        productReviews.map(review => (
+                            <div key={review.id} className="border border-gray-200 rounded-lg p-6">
+                                <div className="flex justify-between items-start mb-3">
+                                    <div>
+                                        <h4 className="font-semibold text-gray-900">{review.userName}</h4>
+                                        <div className="flex items-center space-x-2 mt-1">
+                                            <StarRating rating={review.rating} readonly={true} size="sm" />
+                                            <span className="text-sm text-gray-500">
+                                                {new Date(review.createdAt).toLocaleDateString('ru-RU')}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {(review.advantages || review.disadvantages) && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                                        {review.advantages && (
+                                            <div className="bg-green-50 rounded-lg p-3">
+                                                <h5 className="font-medium text-green-800 text-sm mb-1">Достоинства</h5>
+                                                <p className="text-green-700 text-sm">{review.advantages}</p>
+                                            </div>
+                                        )}
+                                        {review.disadvantages && (
+                                            <div className="bg-red-50 rounded-lg p-3">
+                                                <h5 className="font-medium text-red-800 text-sm mb-1">Недостатки</h5>
+                                                <p className="text-red-700 text-sm">{review.disadvantages}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                <p className="text-gray-700">{review.comment}</p>
+
+                                <div className="flex space-x-4 mt-3 pt-3 border-t border-gray-100">
+                                    <button className="flex items-center space-x-1 text-gray-500 hover:text-green-600 transition-colors text-sm">
+                                        <span>👍</span>
+                                        <span>{review.likes || 0}</span>
+                                    </button>
+                                    <button className="flex items-center space-x-1 text-gray-500 hover:text-red-600 transition-colors text-sm">
+                                        <span>👎</span>
+                                        <span>{review.dislikes || 0}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== ХУК ДЛЯ ИЗБРАННОГО ====================
+    function useFavorites() {
+        const [favorites, setFavorites] = React.useState([]);
+
+        React.useEffect(() => {
+            const savedFavorites = localStorage.getItem('stolplus-favorites');
+            if (savedFavorites) {
+                setFavorites(JSON.parse(savedFavorites));
+            }
+        }, []);
+
+        React.useEffect(() => {
+            localStorage.setItem('stolplus-favorites', JSON.stringify(favorites));
+        }, [favorites]);
+
+        const addToFavorites = (product) => {
+            setFavorites(prev => {
+                if (prev.find(item => item.id === product.id)) {
+                    return prev;
+                }
+                return [...prev, product];
+            });
+        };
+
+        const removeFromFavorites = (productId) => {
+            setFavorites(prev => prev.filter(item => item.id !== productId));
+        };
+
+        const toggleFavorite = (product) => {
+            if (favorites.find(item => item.id === product.id)) {
+                removeFromFavorites(product.id);
+            } else {
+                addToFavorites(product);
+            }
+        };
+
+        const isFavorite = (productId) => {
+            return favorites.some(item => item.id === productId);
+        };
+
+        const clearFavorites = () => {
+            setFavorites([]);
+        };
+
+        return {
+            favorites,
+            addToFavorites,
+            removeFromFavorites,
+            toggleFavorite,
+            isFavorite,
+            clearFavorites
+        };
+    }
+
+    // ==================== КОМПОНЕНТ ГАЛЕРЕИ ====================
+    function ImageGallery({ images, productName }) {
+        const [selectedImage, setSelectedImage] = React.useState(0);
+
+        const galleryImages = Array.isArray(images) ? images : [images];
+
+        return (
+            <div className="image-gallery">
+                {/* Главное изображение */}
+                <div className="mb-4 rounded-xl overflow-hidden bg-gray-100">
+                    <img
+                        src={galleryImages[selectedImage]}
+                        alt={productName}
+                        className="w-full h-80 md:h-96 object-cover cursor-zoom-in"
+                    />
+                </div>
+
+                {/* Миниатюры */}
+                {galleryImages.length > 1 && (
+                    <div className="flex space-x-2 overflow-x-auto pb-2">
+                        {galleryImages.map((image, index) => (
+                            <button
+                                key={index}
+                                onClick={() => setSelectedImage(index)}
+                                className={`flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 ${
+                                    selectedImage === index
+                                        ? 'border-blue-500'
+                                        : 'border-gray-200'
+                                }`}
+                            >
+                                <img
+                                    src={image}
+                                    alt={`${productName} ${index + 1}`}
+                                    className="w-full h-full object-cover"
+                                />
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    // ==================== ОБНОВЛЕННАЯ ДЕТАЛЬНАЯ МОДАЛКА ТОВАРА ====================
+    function ProductDetailModal({ product, isOpen, onClose, onAddToCart, isFavorite, onToggleFavorite, user, reviews, onReviewAdded }) {
+        const [quantity, setQuantity] = React.useState(1);
+        const [activeTab, setActiveTab] = React.useState('description');
+
+        if (!isOpen || !product) return null;
+
+        const getMaterialName = (material) => {
+            const materials = {
+                'GLASS': 'Стекло',
+                'PLASTIC': 'Пластик',
+                'WOOD': 'Дерево',
+                'METAL': 'Металл'
+            };
+            return materials[material] || material;
+        };
+
+        const getImageUrl = (imagePath) => {
+            return `http://localhost:8090${imagePath}`;
+        };
+
+        const productImages = [
+            getImageUrl(product.imageUrl),
+            'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=400&h=300&fit=crop',
+            'https://images.unsplash.com/photo-1586023492125-27b2c045efd7?w=400&h=300&fit=crop'
+        ];
+
+        const averageRating = reviewService.getProductRating(product.id);
+        const productReviews = reviews.filter(review => review.productId === product.id);
+
+        const handleAddToCartWithQuantity = () => {
+            for (let i = 0; i < quantity; i++) {
+                onAddToCart(product.id);
+            }
+            setQuantity(1);
+        };
+
+        return (
+            <div className="fixed inset-0 z-50 overflow-y-auto">
+                <div className="modal-overlay fixed inset-0" onClick={onClose}></div>
+
+                <div className="flex min-h-full items-center justify-center p-4">
+                    <div className="relative bg-white rounded-2xl shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+                        <div className="flex items-center justify-between p-6 border-b">
+                            <h2 className="text-2xl font-bold text-gray-900">Детали товара</h2>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-gray-600 text-2xl p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="overflow-y-auto max-h-[calc(90vh-140px)]">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 p-6">
+                                {/* Левая колонка - Галерея */}
+                                <div>
+                                    <ImageGallery
+                                        images={productImages}
+                                        productName={product.name}
+                                    />
+                                </div>
+
+                                {/* Правая колонка - Информация */}
+                                <div className="space-y-6">
+                                    {/* Название и цена */}
+                                    <div>
+                                        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                                            {product.name}
+                                        </h1>
+                                        <div className="flex items-center space-x-4 mb-3">
+                                            <span className="text-3xl font-bold text-blue-600">
+                                                {product.price?.toLocaleString('ru-RU')} ₽
+                                            </span>
+                                            <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
+                                                {product.productionDays || 7} дней изготовления
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* Рейтинг и отзывы */}
+                                    <div className="flex items-center space-x-4">
+                                        <div className="flex items-center space-x-2">
+                                            <StarRating rating={averageRating} readonly={true} size="lg" />
+                                            <span className="text-lg font-semibold">{averageRating}</span>
+                                        </div>
+                                        <span className="text-gray-500">•</span>
+                                        <span className="text-gray-600">{productReviews.length} отзывов</span>
+                                    </div>
+
+                                    {/* Табы */}
+                                    <div className="border-b border-gray-200">
+                                        <nav className="flex space-x-8">
+                                            {[
+                                                { id: 'description', label: 'Описание' },
+                                                { id: 'specifications', label: 'Характеристики' },
+                                                { id: 'reviews', label: `Отзывы (${productReviews.length})` }
+                                            ].map(tab => (
+                                                <button
+                                                    key={tab.id}
+                                                    onClick={() => setActiveTab(tab.id)}
+                                                    className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                                                        activeTab === tab.id
+                                                            ? 'border-blue-500 text-blue-600'
+                                                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                                                    }`}
+                                                >
+                                                    {tab.label}
+                                                </button>
+                                            ))}
+                                        </nav>
+                                    </div>
+
+                                    {/* Контент табов */}
+                                    <div className="min-h-[200px]">
+                                        {activeTab === 'description' && (
+                                            <div>
+                                                <h3 className="text-lg font-semibold text-gray-900 mb-2">Описание</h3>
+                                                <p className="text-gray-700 leading-relaxed">
+                                                    {product.description || "Качественная мебель, созданная с заботой о вашем комфорте. Идеальное сочетание стиля и функциональности."}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {activeTab === 'specifications' && (
+                                            <div className="space-y-3">
+                                                <h3 className="text-lg font-semibold text-gray-900">Характеристики</h3>
+                                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                                    <div className="flex justify-between border-b pb-2">
+                                                        <span className="text-gray-600">Материал:</span>
+                                                        <span className="font-medium">{getMaterialName(product.material)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between border-b pb-2">
+                                                        <span className="text-gray-600">Срок изготовления:</span>
+                                                        <span className="font-medium">{product.productionDays || 7} дней</span>
+                                                    </div>
+                                                    <div className="flex justify-between border-b pb-2">
+                                                        <span className="text-gray-600">Гарантия:</span>
+                                                        <span className="font-medium">24 месяца</span>
+                                                    </div>
+                                                    <div className="flex justify-between border-b pb-2">
+                                                        <span className="text-gray-600">Доставка:</span>
+                                                        <span className="font-medium">Бесплатная</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {activeTab === 'reviews' && (
+                                            <ReviewsSection
+                                                productId={product.id}
+                                                user={user}
+                                                reviews={reviews}
+                                                onReviewAdded={onReviewAdded}
+                                            />
+                                        )}
+                                    </div>
+
+                                    {/* Выбор количества и кнопки - только на вкладке описания */}
+                                    {activeTab === 'description' && (
+                                        <>
+                                            {/* Выбор количества */}
+                                            <div>
+                                                <h3 className="text-lg font-semibold text-gray-900 mb-3">Количество</h3>
+                                                <div className="flex items-center space-x-4">
+                                                    <div className="flex items-center space-x-3 bg-gray-100 rounded-lg p-2">
+                                                        <button
+                                                            onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                                                            className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors"
+                                                        >
+                                                            -
+                                                        </button>
+                                                        <span className="text-lg font-semibold w-8 text-center">{quantity}</span>
+                                                        <button
+                                                            onClick={() => setQuantity(quantity + 1)}
+                                                            className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-gray-600 hover:bg-gray-200 transition-colors"
+                                                        >
+                                                            +
+                                                        </button>
+                                                    </div>
+                                                    <span className="text-gray-600">
+                                                        Итого: {(product.price * quantity).toLocaleString('ru-RU')} ₽
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            {/* Кнопки действий */}
+                                            <div className="flex space-x-4 pt-4">
+                                                <button
+                                                    onClick={handleAddToCartWithQuantity}
+                                                    className="flex-1 bg-blue-500 text-white py-4 rounded-lg hover:bg-blue-600 transition-colors font-semibold text-lg hover:scale-105 transform transition-transform"
+                                                >
+                                                    Добавить в корзину
+                                                </button>
+                                                <button
+                                                    onClick={() => onToggleFavorite(product)}
+                                                    className={`favorite-btn px-6 py-4 border-2 rounded-lg transition-colors font-semibold ${
+                                                        isFavorite
+                                                            ? 'border-red-500 text-red-500 bg-red-50'
+                                                            : 'border-gray-300 text-gray-700 hover:border-gray-400'
+                                                    }`}
+                                                >
+                                                    {isFavorite ? '❤️' : '🤍'}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {/* Дополнительная информация */}
+                                    <div className="bg-blue-50 rounded-lg p-4">
+                                        <div className="flex items-start space-x-3">
+                                            <span className="text-blue-600 text-lg">📦</span>
+                                            <div>
+                                                <h4 className="font-semibold text-blue-900">Бесплатная доставка</h4>
+                                                <p className="text-blue-700 text-sm">При заказе от 15 000 ₽</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== ОБНОВЛЕННАЯ КАРТОЧКА ТОВАРА ====================
+    function ProductCard({ product, onAddToCart, onViewDetails, isFavorite, onToggleFavorite, reviews }) {
+        const getMaterialName = (material) => {
+            const materials = {
+                'GLASS': 'Стекло',
+                'PLASTIC': 'Пластик',
+                'WOOD': 'Дерево',
+                'METAL': 'Металл'
+            };
+            return materials[material] || material;
+        };
+
+        const getImageUrl = (imagePath) => {
+            return `http://localhost:8090${imagePath}`;
+        };
+
+        const averageRating = reviewService.getProductRating(product.id);
+        const productReviews = reviews.filter(review => review.productId === product.id);
+
+        return (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-300 group cursor-pointer">
+                <div
+                    className="relative overflow-hidden rounded-t-xl"
+                    onClick={() => onViewDetails(product)}
+                >
+                    <img
+                        src={getImageUrl(product.imageUrl)}
+                        alt={product.name}
+                        className="w-full h-48 object-cover group-hover:scale-105 transition-transform duration-300"
+                        onError={(e) => {
+                            e.target.src = 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?w=400&h=300&fit=crop';
+                        }}
+                    />
+                    <div className="absolute top-3 left-3">
+                        <span className="bg-black/70 text-white text-xs px-2 py-1 rounded">
+                            {getMaterialName(product.material)}
+                        </span>
+                    </div>
+                    <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button className="bg-white/90 text-gray-700 p-2 rounded-lg hover:bg-white transition-colors">
+                            👁️
+                        </button>
+                    </div>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleFavorite(product);
+                        }}
+                        className={`absolute top-3 right-12 opacity-0 group-hover:opacity-100 transition-opacity p-2 rounded-lg ${
+                            isFavorite
+                                ? 'bg-red-500 text-white'
+                                : 'bg-white/90 text-gray-700 hover:bg-white'
+                        }`}
+                    >
+                        {isFavorite ? '❤️' : '🤍'}
+                    </button>
+                </div>
+                <div className="p-4">
+                    <h3
+                        className="font-semibold text-gray-900 mb-2 text-lg line-clamp-2 hover:text-blue-600 transition-colors cursor-pointer"
+                        onClick={() => onViewDetails(product)}
+                    >
+                        {product.name}
+                    </h3>
+
+                    {/* Рейтинг на карточке */}
+                    <div className="flex items-center space-x-2 mb-2">
+                        <StarRating rating={averageRating} readonly={true} size="sm" />
+                        <span className="text-sm text-gray-600">{averageRating > 0 ? averageRating : 'Нет оценок'}</span>
+                        <span className="text-gray-400">•</span>
+                        <span className="text-sm text-gray-600">{productReviews.length} отзывов</span>
+                    </div>
+
+                    <p className="text-gray-600 text-sm mb-3 line-clamp-2">
+                        {product.description}
+                    </p>
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-lg font-bold text-blue-600">
+                            {product.price ? product.price.toLocaleString('ru-RU') : '0'} ₽
+                        </span>
+                        <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                            {product.productionDays || 7} дней
+                        </span>
+                    </div>
+                    <div className="flex space-x-2">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onAddToCart(product.id);
+                            }}
+                            className="flex-1 bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition-colors font-medium hover:scale-105 transform transition-transform"
+                        >
+                            В корзину
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onViewDetails(product);
+                            }}
+                            className="px-4 py-3 border border-gray-300 text-gray-700 rounded-lg hover:border-gray-400 transition-colors"
+                        >
+                            👁️
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== КОМПОНЕНТ ФИЛЬТРОВ ====================
+    function FiltersSidebar({ filters, onFilterChange, onResetFilters, products }) {
+        const materialOptions = [
+            { value: 'WOOD', label: 'Дерево' },
+            { value: 'PLASTIC', label: 'Пластик' },
+            { value: 'GLASS', label: 'Стекло' },
+            { value: 'METAL', label: 'Металл' }
+        ];
+
+        const detectCategories = () => {
+            const categories = new Set();
+
+            products.forEach(product => {
+                const name = product.name.toLowerCase();
+
+                if (name.includes('стол') || name.includes('table')) {
+                    categories.add('TABLE');
+                } else if (name.includes('стул') || name.includes('chair') || name.includes('кресл')) {
+                    categories.add('CHAIR');
+                } else if (name.includes('диван') || name.includes('sofa') || name.includes('кушет')) {
+                    categories.add('SOFA');
+                } else if (name.includes('шкаф') || name.includes('cabinet') || name.includes('гардероб')) {
+                    categories.add('CABINET');
+                } else if (name.includes('кровать') || name.includes('bed') || name.includes('спаль')) {
+                    categories.add('BED');
+                } else if (name.includes('полка') || name.includes('shelf') || name.includes('стеллаж')) {
+                    categories.add('SHELF');
+                } else if (name.includes('комод') || name.includes('chest')) {
+                    categories.add('CHEST');
+                }
+            });
+
+            const defaultCategories = ['TABLE', 'CHAIR', 'SOFA', 'CABINET', 'BED'];
+            defaultCategories.forEach(cat => categories.add(cat));
+
+            return Array.from(categories).map(cat => ({
+                value: cat,
+                label: getCategoryLabel(cat)
+            }));
+        };
+
+        const getCategoryLabel = (category) => {
+            const labels = {
+                'TABLE': 'Столы',
+                'CHAIR': 'Стулья и кресла',
+                'SOFA': 'Диваны',
+                'CABINET': 'Шкафы',
+                'BED': 'Кровати',
+                'SHELF': 'Полки',
+                'CHEST': 'Комоды'
+            };
+            return labels[category] || category;
+        };
+
+        const sortOptions = [
+            { value: 'name-asc', label: 'По названию (А-Я)' },
+            { value: 'name-desc', label: 'По названию (Я-А)' },
+            { value: 'price-asc', label: 'По цене (сначала дешевые)' },
+            { value: 'price-desc', label: 'По цене (сначала дорогие)' }
+        ];
+
+        const categories = detectCategories();
+
+        return (
+            <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-6 h-fit sticky top-24">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-semibold text-gray-900">Фильтры</h3>
+                    <button
+                        onClick={onResetFilters}
+                        className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                        Сбросить все
+                    </button>
+                </div>
+
+                <div className="filter-section mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Поиск</label>
+                    <input
+                        type="text"
+                        value={filters.search}
+                        onChange={(e) => onFilterChange('search', e.target.value)}
+                        placeholder="Название товара..."
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                </div>
+
+                <div className="filter-section mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Сортировка</label>
+                    <select
+                        value={filters.sortBy}
+                        onChange={(e) => onFilterChange('sortBy', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                        {sortOptions.map(option => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="filter-section mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Цена, ₽</label>
+                    <div className="flex space-x-2">
+                        <input
+                            type="number"
+                            value={filters.minPrice || ''}
+                            onChange={(e) => onFilterChange('minPrice', e.target.value)}
+                            placeholder="От"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                        <input
+                            type="number"
+                            value={filters.maxPrice || ''}
+                            onChange={(e) => onFilterChange('maxPrice', e.target.value)}
+                            placeholder="До"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                    </div>
+                </div>
+
+                <div className="filter-section mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Материал</label>
+                    <div className="space-y-2">
+                        {materialOptions.map(material => (
+                            <label key={material.value} className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={filters.materials.includes(material.value)}
+                                    onChange={(e) => {
+                                        const newMaterials = e.target.checked
+                                            ? [...filters.materials, material.value]
+                                            : filters.materials.filter(m => m !== material.value);
+                                        onFilterChange('materials', newMaterials);
+                                    }}
+                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="ml-2 text-sm text-gray-700">{material.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="filter-section">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Категории</label>
+                    <div className="space-y-2">
+                        {categories.map(category => (
+                            <label key={category.value} className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    checked={filters.categories.includes(category.value)}
+                                    onChange={(e) => {
+                                        const newCategories = e.target.checked
+                                            ? [...filters.categories, category.value]
+                                            : filters.categories.filter(c => c !== category.value);
+                                        onFilterChange('categories', newCategories);
+                                    }}
+                                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="ml-2 text-sm text-gray-700">{category.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== ХУК ДЛЯ ФИЛЬТРАЦИИ ====================
+    function useProductFilter(products, filters) {
+        const [filteredProducts, setFilteredProducts] = React.useState([]);
+
+        React.useEffect(() => {
+            let filtered = [...products];
+
+            if (filters.search) {
+                filtered = filtered.filter(product =>
+                    product.name.toLowerCase().includes(filters.search.toLowerCase())
+                );
+            }
+
+            if (filters.minPrice) {
+                filtered = filtered.filter(product => product.price >= parseInt(filters.minPrice));
+            }
+            if (filters.maxPrice) {
+                filtered = filtered.filter(product => product.price <= parseInt(filters.maxPrice));
+            }
+
+            if (filters.materials.length > 0) {
+                filtered = filtered.filter(product => filters.materials.includes(product.material));
+            }
+
+            if (filters.categories.length > 0) {
+                filtered = filtered.filter(product => {
+                    const productName = product.name.toLowerCase();
+
+                    return filters.categories.some(category => {
+                        switch (category) {
+                            case 'TABLE':
+                                return productName.includes('стол') || productName.includes('table');
+                            case 'CHAIR':
+                                return productName.includes('стул') || productName.includes('chair') || productName.includes('кресл');
+                            case 'SOFA':
+                                return productName.includes('диван') || productName.includes('sofa') || productName.includes('кушет');
+                            case 'CABINET':
+                                return productName.includes('шкаф') || productName.includes('cabinet') || productName.includes('гардероб');
+                            case 'BED':
+                                return productName.includes('кровать') || productName.includes('bed') || productName.includes('спаль');
+                            case 'SHELF':
+                                return productName.includes('полка') || productName.includes('shelf') || productName.includes('стеллаж');
+                            case 'CHEST':
+                                return productName.includes('комод') || productName.includes('chest');
+                            default:
+                                return true;
+                        }
+                    });
+                });
+            }
+
+            filtered.sort((a, b) => {
+                switch (filters.sortBy) {
+                    case 'name-asc':
+                        return a.name.localeCompare(b.name);
+                    case 'name-desc':
+                        return b.name.localeCompare(a.name);
+                    case 'price-asc':
+                        return a.price - b.price;
+                    case 'price-desc':
+                        return b.price - a.price;
+                    default:
+                        return 0;
+                }
+            });
+
+            setFilteredProducts(filtered);
+        }, [products, filters]);
+
+        return filteredProducts;
+    }
+
+    // ==================== КОРЗИНА ====================
+    function Cart({ isOpen, onClose, cartItems, onRemoveItem, onUpdateQuantity, onCheckout, user }) {
+        const total = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+        if (!isOpen) return null;
+
+        return (
+            <div className="fixed inset-0 z-50 overflow-hidden">
+                <div className="absolute inset-0 bg-black bg-opacity-50" onClick={onClose}></div>
+                <div className="absolute right-0 top-0 h-full w-96 bg-white shadow-xl">
+                    <div className="flex flex-col h-full">
+                        <div className="flex items-center justify-between p-4 border-b">
+                            <h2 className="text-lg font-semibold">Корзина</h2>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-4">
+                            {cartItems.length === 0 ? (
+                                <div className="text-center py-8">
+                                    <div className="text-gray-400 text-4xl mb-4">🛒</div>
+                                    <p className="text-gray-500">Корзина пуста</p>
+                                </div>
+                            ) : (
+                                cartItems.map(item => (
+                                    <div key={item.id} className="flex items-center space-x-3 py-3 border-b">
+                                        <img
+                                            src={item.imageUrl}
+                                            alt={item.name}
+                                            className="w-16 h-16 object-cover rounded"
+                                        />
+                                        <div className="flex-1">
+                                            <h4 className="font-medium text-sm line-clamp-1">{item.name}</h4>
+                                            <p className="text-blue-600 font-semibold">{item.price.toLocaleString('ru-RU')} ₽</p>
+                                            <div className="flex items-center space-x-2 mt-1">
+                                                <button
+                                                    onClick={() => onUpdateQuantity(item.id, item.quantity - 1)}
+                                                    className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-sm"
+                                                >
+                                                    -
+                                                </button>
+                                                <span className="text-sm w-6 text-center">{item.quantity}</span>
+                                                <button
+                                                    onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
+                                                    className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center text-sm"
+                                                >
+                                                    +
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => onRemoveItem(item.id)}
+                                            className="text-red-400 hover:text-red-600"
+                                        >
+                                            ×
+                                        </button>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        {cartItems.length > 0 && (
+                            <div className="border-t p-4 space-y-4">
+                                <div className="flex justify-between text-lg font-semibold">
+                                    <span>Итого:</span>
+                                    <span>{total.toLocaleString('ru-RU')} ₽</span>
+                                </div>
+                                <button
+                                    onClick={onCheckout}
+                                    className="w-full bg-blue-500 text-white py-3 rounded-lg hover:bg-blue-600 transition-colors font-medium"
+                                >
+                                    {user ? 'Оформить заказ' : 'Войти для оформления'}
+                                </button>
+                                {!user && (
+                                    <p className="text-sm text-gray-600 text-center">
+                                        Войдите в аккаунт для оформления заказа
+                                    </p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== HEADER ====================
+    function Header({
+                        cartItemsCount,
+                        onCartClick,
+                        favoritesCount,
+                        onFavoritesClick,
+                        user,
+                        onLoginClick,
+                        onProfileClick
+                    }) {
+        return (
+            <header className="bg-white shadow-sm border-b sticky top-0 z-50">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div className="flex justify-between items-center h-16">
+                        <div className="flex items-center">
+                            <h1 className="text-2xl font-bold text-blue-600">StolPlus</h1>
+                        </div>
+                        <nav className="hidden md:flex space-x-8">
+                            <a href="#catalog" className="text-gray-700 hover:text-blue-600 transition-colors font-medium">Каталог</a>
+                            <a href="#categories" className="text-gray-700 hover:text-blue-600 transition-colors font-medium">Категории</a>
+                            <a href="#about" className="text-gray-700 hover:text-blue-600 transition-colors font-medium">О нас</a>
+                        </nav>
+                        <div className="flex items-center space-x-4">
+                            {/* Иконка избранного */}
+                            <button
+                                onClick={onFavoritesClick}
+                                className="relative p-2 text-gray-700 hover:text-red-500 transition-colors"
+                            >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                                </svg>
+                                {favoritesCount > 0 && (
+                                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                        {favoritesCount}
+                                    </span>
+                                )}
+                            </button>
+
+                            {/* Иконка корзины */}
+                            <button
+                                onClick={onCartClick}
+                                className="relative p-2 text-gray-700 hover:text-blue-600 transition-colors"
+                            >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4m0 0L7 13m0 0l-2.5 5.5M7 13l2.5 5.5m0 0L17 21" />
+                                </svg>
+                                {cartItemsCount > 0 && (
+                                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                                        {cartItemsCount}
+                                    </span>
+                                )}
+                            </button>
+
+                            {/* Кнопка входа/профиля */}
+                            {user ? (
+                                <button
+                                    onClick={onProfileClick}
+                                    className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors font-medium"
+                                >
+                                    Кабинет
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={onLoginClick}
+                                    className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors font-medium"
+                                >
+                                    Войти
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </header>
+        );
+    }
+
+    // ==================== HERO SECTION ====================
+    function HeroSection() {
+        return (
+            <section className="pt-20 pb-16">
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+                    <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 mb-6">
+                        Мебель для <span className="text-blue-600 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">комфортной жизни</span>
+                    </h1>
+                    <p className="text-lg md:text-xl text-gray-600 mb-8 max-w-2xl mx-auto leading-relaxed">
+                        Современная мебель премиум-класса. Создайте уют в вашем доме с нашими эксклюзивными коллекциями.
+                    </p>
+                    <a
+                        href="#catalog"
+                        className="bg-blue-500 text-white px-8 py-4 rounded-lg text-lg font-medium hover:bg-blue-600 transition-colors hover:scale-105 transform transition-transform shadow-lg inline-block"
+                    >
+                        Смотреть каталог
+                    </a>
+                </div>
+            </section>
+        );
+    }
+
+    // ==================== LOADING SPINNER ====================
+    function LoadingSpinner() {
+        return (
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                <div className="text-center">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Загружаем каталог...</p>
+                </div>
+            </div>
+        );
+    }
+
+    // ==================== APP КОМПОНЕНТ ====================
+    function App() {
+        const [products, setProducts] = React.useState([]);
+        const [loading, setLoading] = React.useState(true);
+        const [cart, setCart] = React.useState([]);
+        const [orders, setOrders] = React.useState([]);
+        const [reviews, setReviews] = React.useState([]);
+        const [user, setUser] = React.useState(null);
+
+        // Состояния модалок
+        const [isCartOpen, setIsCartOpen] = React.useState(false);
+        const [isFavoritesOpen, setIsFavoritesOpen] = React.useState(false);
+        const [isAuthOpen, setIsAuthOpen] = React.useState(false);
+        const [isProfileOpen, setIsProfileOpen] = React.useState(false);
+        const [isCheckoutOpen, setIsCheckoutOpen] = React.useState(false);
+        const [selectedProduct, setSelectedProduct] = React.useState(null);
+        const [isProductModalOpen, setIsProductModalOpen] = React.useState(false);
+
+        const [filters, setFilters] = React.useState({
+            search: '',
+            sortBy: 'name-asc',
+            minPrice: '',
+            maxPrice: '',
+            materials: [],
+            categories: []
+        });
+
+        // Инициализация
+        React.useEffect(() => {
+            loadDataFromAPI();
+            const currentUser = authService.getCurrentUser();
+            if (currentUser) {
+                setUser(currentUser);
+            }
+            const savedOrders = orderService.getOrders();
+            setOrders(savedOrders);
+            const savedReviews = reviewService.getReviews();
+            setReviews(savedReviews);
+        }, []);
+
+        const {
+            favorites,
+            toggleFavorite,
+            isFavorite,
+            removeFromFavorites
+        } = useFavorites();
+
+        const filteredProducts = useProductFilter(products, filters);
+
+        const loadDataFromAPI = async () => {
+            try {
+                setLoading(true);
+                const furnitureData = await apiService.getAllFurniture();
+                setProducts(furnitureData);
+            } catch (err) {
+                console.error('Ошибка загрузки:', err);
+                setProducts([
+                    {
+                        id: 1,
+                        name: "Эргономичный офисный стул",
+                        price: 12500,
+                        material: "PLASTIC",
+                        imageUrl: "/images/office_chair.jpg",
+                        description: "Комфортный стул для долгой работы в офисе.",
+                        productionDays: 5
+                    },
+                    {
+                        id: 2,
+                        name: "Деревянный обеденный стол",
+                        price: 25400,
+                        material: "WOOD",
+                        imageUrl: "/images/dining_table.jpg",
+                        description: "Массивный стол из натурального дерева.",
+                        productionDays: 10
+                    },
+                    {
+                        id: 3,
+                        name: "Стеклянный журнальный столик",
+                        price: 18700,
+                        material: "GLASS",
+                        imageUrl: "/images/coffee_table.jpg",
+                        description: "Элегантный столик с стеклянной столешницей.",
+                        productionDays: 7
+                    }
+                ]);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        const handleLogin = (userData) => {
+            setUser(userData);
+        };
+
+        const handleLogout = () => {
+            authService.logout();
+            setUser(null);
+            setIsProfileOpen(false);
+        };
+
+        const handleOrderCreated = (newOrder) => {
+            setOrders(prev => [...prev, newOrder]);
+            setCart([]);
+            alert(`Заказ #${newOrder.id} успешно создан!`);
+        };
+
+        const handleReviewAdded = (newReview) => {
+            setReviews(prev => [...prev, newReview]);
+        };
+
+        const handleAddToCart = (productId) => {
+            const product = products.find(p => p.id === productId);
+            if (!product) return;
+
+            setCart(prevCart => {
+                const existingItem = prevCart.find(item => item.id === productId);
+                if (existingItem) {
+                    return prevCart.map(item =>
+                        item.id === productId
+                            ? { ...item, quantity: item.quantity + 1 }
+                            : item
+                    );
+                } else {
+                    return [...prevCart, {
+                        ...product,
+                        quantity: 1,
+                        imageUrl: product.imageUrl.startsWith('http')
+                            ? product.imageUrl
+                            : `http://localhost:8090${product.imageUrl}`
+                    }];
+                }
+            });
+        };
+
+        const handleRemoveFromCart = (productId) => {
+            setCart(prevCart => prevCart.filter(item => item.id !== productId));
+        };
+
+        const handleUpdateQuantity = (productId, newQuantity) => {
+            if (newQuantity < 1) {
+                handleRemoveFromCart(productId);
+                return;
+            }
+
+            setCart(prevCart =>
+                prevCart.map(item =>
+                    item.id === productId
+                        ? { ...item, quantity: newQuantity }
+                        : item
+                )
+            );
+        };
+
+        const handleViewProductDetails = (product) => {
+            setSelectedProduct(product);
+            setIsProductModalOpen(true);
+        };
+
+        const handleCloseProductModal = () => {
+            setIsProductModalOpen(false);
+            setSelectedProduct(null);
+        };
+
+        const handleFilterChange = (filterName, value) => {
+            setFilters(prev => ({
+                ...prev,
+                [filterName]: value
+            }));
+        };
+
+        const handleResetFilters = () => {
+            setFilters({
+                search: '',
+                sortBy: 'name-asc',
+                minPrice: '',
+                maxPrice: '',
+                materials: [],
+                categories: []
+            });
+        };
+
+        const cartItemsCount = cart.reduce((total, item) => total + item.quantity, 0);
+        const favoritesCount = favorites.length;
+
+        if (loading) {
+            return <LoadingSpinner />;
+        }
+
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+                <Header
+                    cartItemsCount={cartItemsCount}
+                    onCartClick={() => setIsCartOpen(true)}
+                    favoritesCount={favoritesCount}
+                    onFavoritesClick={() => setIsFavoritesOpen(true)}
+                    user={user}
+                    onLoginClick={() => setIsAuthOpen(true)}
+                    onProfileClick={() => setIsProfileOpen(true)}
+                />
+                <HeroSection />
+
+                <section className="py-16 bg-white" id="catalog">
+                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                        <div className="flex justify-between items-center mb-8">
+                            <div>
+                                <h2 className="text-3xl font-bold text-gray-900">Каталог мебели</h2>
+                                <p className="text-gray-600 mt-2">{filteredProducts.length} товаров из {products.length}</p>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col lg:flex-row gap-8">
+                            <div className="lg:w-1/4">
+                                <FiltersSidebar
+                                    filters={filters}
+                                    onFilterChange={handleFilterChange}
+                                    onResetFilters={handleResetFilters}
+                                    products={products}
+                                />
+                            </div>
+
+                            <div className="lg:w-3/4">
+                                {filteredProducts.length === 0 ? (
+                                    <div className="text-center py-12">
+                                        <div className="text-gray-400 text-6xl mb-4">🔍</div>
+                                        <h3 className="text-xl font-semibold text-gray-900 mb-2">Товары не найдены</h3>
+                                        <p className="text-gray-600 mb-4">Попробуйте изменить параметры фильтрации</p>
+                                        <button
+                                            onClick={handleResetFilters}
+                                            className="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors"
+                                        >
+                                            Сбросить фильтры
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                                        {filteredProducts.map(product => (
+                                            <ProductCard
+                                                key={product.id}
+                                                product={product}
+                                                onAddToCart={handleAddToCart}
+                                                onViewDetails={handleViewProductDetails}
+                                                isFavorite={isFavorite(product.id)}
+                                                onToggleFavorite={toggleFavorite}
+                                                reviews={reviews}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                {/* Все модалки */}
+                <Cart
+                    isOpen={isCartOpen}
+                    onClose={() => setIsCartOpen(false)}
+                    cartItems={cart}
+                    onRemoveItem={handleRemoveFromCart}
+                    onUpdateQuantity={handleUpdateQuantity}
+                    onCheckout={() => setIsCheckoutOpen(true)}
+                    user={user}
+                />
+
+                <CheckoutModal
+                    isOpen={isCheckoutOpen}
+                    onClose={() => setIsCheckoutOpen(false)}
+                    cartItems={cart}
+                    onOrderCreated={handleOrderCreated}
+                    user={user}
+                />
+
+                <AuthModal
+                    isOpen={isAuthOpen}
+                    onClose={() => setIsAuthOpen(false)}
+                    onLogin={handleLogin}
+                />
+
+                <UserProfileModal
+                    isOpen={isProfileOpen}
+                    onClose={() => setIsProfileOpen(false)}
+                    user={user}
+                    orders={orders}
+                    onLogout={handleLogout}
+                />
+
+                <FavoritesModal
+                    isOpen={isFavoritesOpen}
+                    onClose={() => setIsFavoritesOpen(false)}
+                    favorites={favorites}
+                    onRemoveFavorite={removeFromFavorites}
+                    onAddToCart={handleAddToCart}
+                    onViewDetails={handleViewProductDetails}
+                />
+
+                <ProductDetailModal
+                    product={selectedProduct}
+                    isOpen={isProductModalOpen}
+                    onClose={handleCloseProductModal}
+                    onAddToCart={handleAddToCart}
+                    isFavorite={selectedProduct ? isFavorite(selectedProduct.id) : false}
+                    onToggleFavorite={toggleFavorite}
+                    user={user}
+                    reviews={reviews}
+                    onReviewAdded={handleReviewAdded}
+                />
+            </div>
+        );
+    }
+
+    // Рендерим приложение
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+</body>
+</html>

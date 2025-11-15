@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: stol-plus-app
+
+  datasource:
+    url: jdbc:postgresql://localhost:5434/stol_db
+    username: username
+    password: 1234Ilyas
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jpa:
+    hibernate:
+      ddl-auto: none
+server:
+  port: 8090
+
+springdoc:
+  swagger-ui:
+    path: /docs                           # Путь к UI интерфейсу

@@ -1,0 +1,49 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_DB: stol_db
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: 1234Ilyas
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  stolplus-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: stolplus-app
+    environment:
+      # Database
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/stol_db
+      SPRING_DATASOURCE_USERNAME: username
+      SPRING_DATASOURCE_PASSWORD: 1234Ilyas
+
+      # Spring
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_JPA_HIBERNATE_DDL_AUTO: validate
+      SPRING_JPA_SHOW_SQL: "false"
+
+      # Flyway
+      SPRING_FLYWAY_ENABLED: "true"
+      SPRING_FLYWAY_LOCATIONS: classpath:db/migration
+
+      # Server
+      SERVER_PORT: 8090
+      SERVER_SERVLET_CONTEXT_PATH: /
+
+      # Logging
+      LOGGING_LEVEL_RU_ENIKEEV: DEBUG
+      LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY: INFO
+    ports:
+      - "8090:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
