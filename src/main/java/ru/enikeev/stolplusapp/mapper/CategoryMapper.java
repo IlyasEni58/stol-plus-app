@@ -4,6 +4,7 @@ import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.MappingTarget;
 import ru.enikeev.stolplusapp.dto.request.CategoryRequestDTO;
+
 import ru.enikeev.stolplusapp.dto.response.CategoryResponseDTO;
 import ru.enikeev.stolplusapp.model.Category;
 

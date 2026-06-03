@@ -14,5 +14,5 @@ public class CategoryResponseDTO {
     private UUID id;
     private String name;
     private String description;
-    // Можно добавить: Integer furnitureCount (вычисляемое поле)
+
 }
